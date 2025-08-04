@@ -2,10 +2,9 @@
 package stack
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/oarkflow/stack/logs"
@@ -269,40 +268,129 @@ func (e *Error) Unwrap() error {
 	return e.Err
 }
 
-// generateID constructs a self-explanatory, short error ID.
-func generateID(domain Domain, ops string, severity Severity, status int) string {
-	if ops == "" {
-		ops = "n/a"
-	}
-	ts := time.Now().Unix()
-	tsHex := strings.ToUpper(strconv.FormatInt(ts, 16))
-	return fmt.Sprintf("%s-%s-%s-%d-%d", tsHex, domain, ops, severity, status)
+// Wrap wraps an existing error with comprehensive debugging information.
+func Wrap(underlying error, domain Domain, severity Severity, status int, code, message string, metadata map[string]string) *Error {
+	return WrapWithContext(context.Background(), underlying, domain, severity, status, code, message, metadata)
 }
 
-// ParseID extracts information from an error ID.
-func ParseID(errorID string) (timestamp int64, domain Domain, ops string, severity Severity, status int, err error) {
-	parts := strings.Split(errorID, "-")
-	if len(parts) != 5 {
-		return 0, "", "", SeverityLow, 0, fmt.Errorf("invalid error ID format")
+// WrapWithContext wraps an existing error with context for correlation IDs.
+func WrapWithContext(ctx context.Context, underlying error, domain Domain, severity Severity, status int, code, message string, metadata map[string]string) *Error {
+	// Validate domain and severity
+	if !globalRegistry.HasDomain(domain) {
+		globalLogger.Warn("Wrapping error with unknown domain", map[string]any{
+			"domain": string(domain),
+			"code":   code,
+		})
 	}
 
-	timestamp, err = strconv.ParseInt(parts[0], 16, 64)
-	if err != nil {
-		return 0, "", "", SeverityLow, 0, fmt.Errorf("invalid timestamp in error ID")
+	if !globalRegistry.HasSeverity(severity) {
+		globalLogger.Warn("Wrapping error with unknown severity", map[string]any{
+			"severity": severity.String(),
+			"code":     code,
+		})
 	}
 
-	domain = Domain(parts[1])
+	file, line, function := getCallerInfo()
+	requestID, sessionID, userID, traceID := extractCorrelationIDs(ctx, metadata)
+	ops, _ := metadata["operation"]
 
-	ops = parts[2]
+	err := &Error{
+		ID:        generateID(domain, ops, severity, status),
+		Code:      code,
+		Domain:    domain,
+		Severity:  severity,
+		Status:    status,
+		Message:   message,
+		Timestamp: time.Now(),
+		Stack:     captureStack(globalRegistry.config, severity),
+		Metadata:  metadata,
+		Err:       underlying,
+		RequestID: requestID,
+		SessionID: sessionID,
+		UserID:    userID,
+		TraceID:   traceID,
+	}
 
-	severityCode, err := strconv.Atoi(parts[3])
-	if err != nil {
-		return 0, "", "", SeverityLow, 0, fmt.Errorf("invalid severity code in error ID")
+	// Create error record for registry
+	record := &ErrorRecord{
+		ID:          err.ID,
+		Code:        code,
+		Domain:      domain,
+		Severity:    severity,
+		Status:      status,
+		Message:     message,
+		Timestamp:   err.Timestamp,
+		Stack:       err.Stack,
+		Metadata:    metadata,
+		File:        file,
+		Line:        line,
+		Function:    function,
+		Environment: getEnvironment(),
+		Version:     getVersion(),
+		RequestID:   requestID,
+		SessionID:   sessionID,
+		UserID:      userID,
+		TraceID:     traceID,
 	}
-	severity = Severity(severityCode)
-	status, err = strconv.Atoi(parts[4])
-	if err != nil {
-		return 0, "", "", SeverityLow, 0, fmt.Errorf("invalid status in error ID")
+
+	// Register error for debugging
+	globalRegistry.Register(record)
+
+	return err
+}
+
+// NewAuthError creates a new authentication error
+func NewAuthError(code, message string, metadata map[string]string) *Error {
+	return New(DomainAuth, SeverityMedium, 401, code, message, metadata)
+}
+
+// NewAuthErrorWithContext creates a new authentication error with context
+func NewAuthErrorWithContext(ctx context.Context, code, message string, metadata map[string]string) *Error {
+	return NewWithContext(ctx, DomainAuth, SeverityMedium, 401, code, message, metadata)
+}
+
+// NewDBError creates a new database error
+func NewDBError(code, message string, metadata map[string]string) *Error {
+	return New(DomainDB, SeverityHigh, 500, code, message, metadata)
+}
+
+// NewDBErrorWithContext creates a new database error with context
+func NewDBErrorWithContext(ctx context.Context, code, message string, metadata map[string]string) *Error {
+	return NewWithContext(ctx, DomainDB, SeverityHigh, 500, code, message, metadata)
+}
+
+// NewAPIError creates a new API error
+func NewAPIError(status int, code, message string, metadata map[string]string) *Error {
+	severity := SeverityMedium
+	if status >= 500 {
+		severity = SeverityHigh
+	} else if status >= 400 {
+		severity = SeverityMedium
+	} else {
+		severity = SeverityLow
 	}
-	return timestamp, domain, ops, severity, status, nil
+	return New(DomainAPI, severity, status, code, message, metadata)
+}
+
+// NewAPIErrorWithContext creates a new API error with context
+func NewAPIErrorWithContext(ctx context.Context, status int, code, message string, metadata map[string]string) *Error {
+	severity := SeverityMedium
+	if status >= 500 {
+		severity = SeverityHigh
+	} else if status >= 400 {
+		severity = SeverityMedium
+	} else {
+		severity = SeverityLow
+	}
+	return NewWithContext(ctx, DomainAPI, severity, status, code, message, metadata)
+}
+
+// NewCriticalError creates a new critical system error
+func NewCriticalError(domain Domain, code, message string, metadata map[string]string) *Error {
+	return New(domain, SeverityCritical, 500, code, message, metadata)
+}
+
+// NewCriticalErrorWithContext creates a new critical system error with context
+func NewCriticalErrorWithContext(ctx context.Context, domain Domain, code, message string, metadata map[string]string) *Error {
+	return NewWithContext(ctx, domain, SeverityCritical, 500, code, message, metadata)
 }

@@ -5,14 +5,6 @@ import (
 	"sync"
 )
 
-type CallbackMode string
-
-const (
-	CallbackModeAsync CallbackMode = "async"
-	CallbackModeSync  CallbackMode = "sync"
-	CallbackModeMixed CallbackMode = "mixed"
-)
-
 // ErrorCallback is a function type for error callbacks
 type ErrorCallback func(record *ErrorRecord)
 

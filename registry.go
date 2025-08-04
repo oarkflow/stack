@@ -1,8 +1,6 @@
 package stack
 
 import (
-	"encoding/json"
-	"os"
 	"sync"
 
 	"github.com/oarkflow/stack/logs"
@@ -43,8 +41,6 @@ func NewErrorRegistry(filename string) *ErrorRegistry {
 	// Start background writer
 	go registry.backgroundWriter()
 
-	// Load existing errors from file
-	registry.loadFromFile()
 	return registry
 }
 
@@ -66,8 +62,6 @@ func NewErrorRegistryWithConfig(filename string, config *Config) *ErrorRegistry 
 	// Start background writer
 	go registry.backgroundWriter()
 
-	// Load existing errors from file
-	registry.loadFromFile()
 	return registry
 }
 
@@ -103,30 +97,6 @@ func (r *ErrorRegistry) Close() error {
 		}
 	}
 
-	return nil
-}
-
-// loadFromFile loads error records from persistent storage
-func (r *ErrorRegistry) loadFromFile() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	data, err := os.ReadFile(r.file)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil // File doesn't exist yet, that's okay
-		}
-		return err
-	}
-
-	var records []*ErrorRecord
-	if err := json.Unmarshal(data, &records); err != nil {
-		return err
-	}
-
-	for _, record := range records {
-		r.storage.Add(record)
-	}
 	return nil
 }
 
