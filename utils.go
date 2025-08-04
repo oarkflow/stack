@@ -8,14 +8,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sms/pkg/errors/logs"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/oarkflow/log"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/slack-go/slack"
+	"github.com/oarkflow/stack/logs"
 )
 
 // extractCorrelationIDs extracts correlation IDs from context and metadata
@@ -736,38 +733,9 @@ func ErrorMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Metrics Integration
-var errorCounter = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "error_count",
-		Help: "Count of errors categorized by domain and severity",
-	},
-	[]string{"domain", "severity"},
-)
-
-func RegisterMetricsCallback(callback func(err Error)) {
-	prometheus.MustRegister(errorCounter)
-	callback = func(err Error) {
-		errorCounter.WithLabelValues(string(err.Domain), err.Severity.String()).Inc()
-	}
-}
-
 // Error Categorization
 func NewValidationError(code, message string, details map[string]string) *Error {
 	return New(DomainValidation, SeverityMedium, 400, code, message, details)
-}
-
-// Error Notification
-func RegisterNotificationCallback(callback func(err Error)) {
-	callback = func(err Error) {
-		if err.Severity == SeverityCritical {
-			slackClient := slack.New("your-slack-token")
-			_, _, err := slackClient.PostMessage("#alerts", slack.MsgOptionText(fmt.Sprintf("Critical Error: %s", err.Message), false))
-			if err != nil {
-				log.Printf("Failed to send Slack notification: %v", err)
-			}
-		}
-	}
 }
 
 // RenderErrorPage implementation
